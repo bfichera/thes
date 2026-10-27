@@ -49,7 +49,8 @@ impl Thesaurus {
     /// Open, building the data first (downloading the source if needed) when missing.
     pub fn open_or_build(paths: &Paths, log: &dyn Fn(&str)) -> Result<Thesaurus> {
         if !paths.is_current() {
-            let src = ingest::fetch_source(paths, None, log)?;
+            log("building thesaurus (first run, takes a second or two)");
+            let src = ingest::resolve_source(paths, None, log)?;
             let r = ingest::build(paths, &src, log)?;
             log(&format!(
                 "built {} senses / {} words in {:.1}s",

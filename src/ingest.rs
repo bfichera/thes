@@ -6,7 +6,7 @@ use crate::search::{self, LemmaDoc};
 use crate::store;
 use anyhow::{Context, Result, bail};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -19,26 +19,72 @@ pub struct Report {
     pub millis: u128,
 }
 
-/// Resolve a source (local path or http(s) URL) to a local file, downloading if needed.
-pub fn fetch_source(paths: &Paths, source: Option<&str>, log: &dyn Fn(&str)) -> Result<PathBuf> {
+/// Where thesaurus data comes from.
+#[derive(Debug, Clone)]
+pub enum Source {
+    /// The WordNet jsonl compiled into the binary.
+    Embedded,
+    /// A local `.jsonl` or zstd-compressed `.jsonl.zst` file.
+    File(PathBuf),
+}
+
+impl Source {
+    pub fn describe(&self) -> String {
+        match self {
+            Source::Embedded => "embedded WordNet 3.0 (zaibacu/thesaurus)".into(),
+            Source::File(p) => p.display().to_string(),
+        }
+    }
+
+    fn reader(&self) -> Result<Box<dyn Read>> {
+        match self {
+            #[cfg(feature = "embed-data")]
+            Source::Embedded => Ok(Box::new(zstd_reader(EMBEDDED)?)),
+            #[cfg(not(feature = "embed-data"))]
+            Source::Embedded => bail!("this build has no embedded data"),
+            Source::File(p) => {
+                let f = std::fs::File::open(p).with_context(|| format!("opening {}", p.display()))?;
+                if p.extension().is_some_and(|e| e == "zst") {
+                    Ok(Box::new(zstd_reader(BufReader::new(f))?))
+                } else {
+                    Ok(Box::new(f))
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "embed-data")]
+const EMBEDDED: &[u8] = include_bytes!("../data/en_thesaurus.jsonl.zst");
+
+fn zstd_reader<R: Read>(r: R) -> Result<impl Read> {
+    ruzstd::decoding::StreamingDecoder::new(r)
+        .map_err(|e| anyhow::anyhow!("invalid zstd data: {e}"))
+}
+
+pub const HAS_EMBEDDED: bool = cfg!(feature = "embed-data");
+
+/// Pick a data source. Order: explicit `source`, `$THES_SOURCE`, embedded data,
+/// a previously downloaded copy, then a fresh download of the default.
+pub fn resolve_source(paths: &Paths, source: Option<&str>, log: &dyn Fn(&str)) -> Result<Source> {
     let env = std::env::var("THES_SOURCE").ok().filter(|s| !s.is_empty());
-    let src = source.map(str::to_string).or(env);
-    match src {
-        Some(s) if !is_url(&s) => {
+    match source.map(str::to_string).or(env) {
+        Some(s) if s == "embedded" => Ok(Source::Embedded),
+        Some(s) if is_url(&s) => Ok(Source::File(download(&s, &paths.source_cache(), log)?)),
+        Some(s) => {
             let p = PathBuf::from(&s);
             if !p.is_file() {
                 bail!("source file not found: {}", p.display());
             }
-            Ok(p)
+            Ok(Source::File(p))
         }
-        Some(url) => download(&url, &paths.source_cache(), log),
+        None if HAS_EMBEDDED => Ok(Source::Embedded),
         None => {
             let cache = paths.source_cache();
-            if cache.is_file() {
-                Ok(cache)
-            } else {
-                download(DEFAULT_SOURCE, &cache, log)
+            if !cache.is_file() {
+                download(DEFAULT_SOURCE, &cache, log)?;
             }
+            Ok(Source::File(cache))
         }
     }
 }
@@ -71,18 +117,18 @@ fn sense_number(key: &str) -> u32 {
         .unwrap_or(u32::MAX)
 }
 
-pub fn read_entries(path: &Path) -> Result<(Vec<Entry>, usize)> {
-    let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+pub fn read_entries(source: &Source) -> Result<(Vec<Entry>, usize)> {
+    let name = source.describe();
     let mut entries = Vec::with_capacity(120_000);
     let mut seen_keys = BTreeSet::new();
     let mut skipped = 0;
-    for (i, line) in BufReader::new(file).lines().enumerate() {
+    for (i, line) in BufReader::new(source.reader()?).lines().enumerate() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
         let raw: RawEntry = serde_json::from_str(&line)
-            .with_context(|| format!("{}:{}: invalid JSON", path.display(), i + 1))?;
+            .with_context(|| format!("{name}:{}: invalid JSON", i + 1))?;
         match Entry::from_raw(raw) {
             Some(e) if seen_keys.insert(e.key.clone()) => entries.push(e),
             _ => skipped += 1,
@@ -96,12 +142,12 @@ pub fn read_entries(path: &Path) -> Result<(Vec<Entry>, usize)> {
 }
 
 /// Build into a temporary directory, then swap it in atomically.
-pub fn build(paths: &Paths, source: &Path, log: &dyn Fn(&str)) -> Result<Report> {
+pub fn build(paths: &Paths, source: &Source, log: &dyn Fn(&str)) -> Result<Report> {
     let start = Instant::now();
-    log(&format!("reading {}", source.display()));
+    log(&format!("reading {}", source.describe()));
     let (entries, skipped) = read_entries(source)?;
     if entries.is_empty() {
-        bail!("no entries found in {}", source.display());
+        bail!("no entries found in {}", source.describe());
     }
 
     // Headwords keep their capitalisation (e.g. "Paris"); synonyms are lowercase in the
@@ -126,7 +172,8 @@ pub fn build(paths: &Paths, source: &Path, log: &dyn Fn(&str)) -> Result<Report>
     log(&format!("writing {} senses to turso database", entries.len()));
     let meta = [
         ("schema_version", SCHEMA_VERSION.to_string()),
-        ("source", source.display().to_string()),
+        ("source", source.describe()),
+        ("thes_version", env!("CARGO_PKG_VERSION").to_string()),
         ("senses", entries.len().to_string()),
     ];
     store::write(
@@ -180,7 +227,7 @@ pub fn build(paths: &Paths, source: &Path, log: &dyn Fn(&str)) -> Result<Report>
             gloss: a.gloss,
         }),
     )?;
-    std::fs::write(tmp_paths.stamp(), SCHEMA_VERSION)?;
+    std::fs::write(tmp_paths.stamp(), crate::paths::stamp())?;
 
     for p in [paths.db(), paths.index(), paths.stamp()] {
         if p.is_dir() {

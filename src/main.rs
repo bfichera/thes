@@ -2,7 +2,7 @@ mod print;
 mod tui;
 
 use anyhow::{Result, bail};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use std::io::IsTerminal;
 use thes::{Filter, Paths, Pos, Query, Thesaurus, ingest};
 
@@ -73,17 +73,27 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Build the database and search index (downloads the source if needed).
+    /// (Re)build the database and search index.
+    ///
+    /// Uses the data embedded in the binary unless --source is given.
     Build {
-        /// Path or URL to a jsonl file in zaibacu/thesaurus format.
+        /// Path (.jsonl or .jsonl.zst) or URL in zaibacu/thesaurus format, or `embedded`.
         #[arg(long)]
         source: Option<String>,
-        /// Re-download the default source even if cached.
-        #[arg(long)]
+        /// Download the latest upstream jsonl instead of using embedded data.
+        #[arg(long, conflicts_with = "source")]
         refresh: bool,
     },
     /// Show where data lives and whether it is built.
     Info,
+    /// Print shell completions to stdout.
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Print the man page (roff) to stdout.
+    #[command(hide = true)]
+    Man,
 }
 
 fn log(msg: &str) {
@@ -104,10 +114,13 @@ fn run() -> Result<()> {
 
     match cli.cmd {
         Some(Cmd::Build { source, refresh }) => {
-            if refresh && source.is_none() {
+            let source = if refresh {
                 let _ = std::fs::remove_file(paths.source_cache());
-            }
-            let src = ingest::fetch_source(&paths, source.as_deref(), &log)?;
+                Some(thes::paths::DEFAULT_SOURCE.to_string())
+            } else {
+                source
+            };
+            let src = ingest::resolve_source(&paths, source.as_deref(), &log)?;
             let r = ingest::build(&paths, &src, &log)?;
             log(&format!(
                 "built {} senses / {} words in {:.1}s ({} skipped) -> {}",
@@ -120,16 +133,27 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some(Cmd::Info) => {
-            println!("data:   {}", paths.root.display());
-            println!("db:     {}", paths.db().display());
-            println!("index:  {}", paths.index().display());
+            println!("data:     {}", paths.root.display());
+            println!("db:       {}", paths.db().display());
+            println!("index:    {}", paths.index().display());
+            println!("version:  {}", env!("CARGO_PKG_VERSION"));
+            println!("embedded: {}", if ingest::HAS_EMBEDDED { "yes" } else { "no" });
             if paths.is_current() {
                 let t = Thesaurus::open(&paths)?;
-                println!("senses: {}", t.meta("senses")?.unwrap_or_default());
-                println!("source: {}", t.meta("source")?.unwrap_or_default());
+                println!("senses:   {}", t.meta("senses")?.unwrap_or_default());
+                println!("source:   {}", t.meta("source")?.unwrap_or_default());
             } else {
-                println!("status: not built (run `thes build`)");
+                println!("status:   not built (builds automatically on first use)");
             }
+            Ok(())
+        }
+        Some(Cmd::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "thes", &mut std::io::stdout());
+            Ok(())
+        }
+        Some(Cmd::Man) => {
+            clap_mangen::Man::new(Cli::command()).render(&mut std::io::stdout())?;
             Ok(())
         }
         Some(Cmd::Search { query, limit, json }) => {

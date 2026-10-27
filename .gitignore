@@ -1,2 +1,6 @@
 /target
 /.cargo/config.toml
+/dist
+/pkg
+/stage
+/bin

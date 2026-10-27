@@ -9,7 +9,7 @@ fn built() -> &'static Paths {
         let _ = std::fs::remove_dir_all(&root);
         let paths = Paths::new(&root);
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixture.jsonl");
-        let r = ingest::build(&paths, &src, &|_| {}).unwrap();
+        let r = ingest::build(&paths, &ingest::Source::File(src), &|_| {}).unwrap();
         assert_eq!(r.senses, 8);
         paths
     })
@@ -77,4 +77,22 @@ fn fuzzy_search() {
     let mut words: Vec<_> = hits.iter().map(|h| h.word.as_str()).collect();
     words.sort();
     assert_eq!(words, ["glad", "happy"]);
+}
+
+#[cfg(feature = "embed-data")]
+#[test]
+fn embedded_data_decodes() {
+    let (entries, skipped) = ingest::read_entries(&ingest::Source::Embedded).unwrap();
+    assert_eq!(entries.len(), 117_791);
+    assert_eq!(skipped, 0);
+}
+
+#[test]
+fn zstd_file_source() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("data/en_thesaurus.jsonl.zst");
+    if !src.is_file() {
+        return;
+    }
+    let (entries, _) = ingest::read_entries(&ingest::Source::File(src)).unwrap();
+    assert!(entries.iter().any(|e| e.word == "happy"));
 }

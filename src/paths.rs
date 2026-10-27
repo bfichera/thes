@@ -3,6 +3,10 @@ use std::path::PathBuf;
 /// Bump whenever the on-disk layout of the database or index changes.
 pub const SCHEMA_VERSION: &str = "2";
 
+pub fn stamp() -> String {
+    format!("{SCHEMA_VERSION} {}", env!("CARGO_PKG_VERSION"))
+}
+
 pub const DEFAULT_SOURCE: &str =
     "https://raw.githubusercontent.com/zaibacu/thesaurus/master/en_thesaurus.jsonl";
 
@@ -46,12 +50,13 @@ impl Paths {
         self.root.join("VERSION")
     }
 
-    /// True when a complete build matching this binary's schema exists.
+    /// True when a complete build made by this exact version of `thes` exists,
+    /// so upgrades rebuild automatically.
     pub fn is_current(&self) -> bool {
         self.db().is_file()
             && self.index().join("meta.json").is_file()
             && std::fs::read_to_string(self.stamp())
-                .map(|s| s.trim() == SCHEMA_VERSION)
+                .map(|s| s.trim() == stamp())
                 .unwrap_or(false)
     }
 }
