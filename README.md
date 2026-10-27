@@ -45,6 +45,7 @@ Queries accept inline filters anywhere: `pos:<noun|verb|adj|adv>` (also `p:`) an
 | `y` / `Y` | yank synonym / page word |
 | `/` or `s` | search |
 | `f` | cycle part-of-speech filter |
+| `R` | reset: clear history and return to the start screen |
 | `?`, `q` | help, quit |
 
 | search | |
@@ -52,7 +53,7 @@ Queries accept inline filters anywhere: `pos:<noun|verb|adj|adv>` (also `p:`) an
 | type | live fuzzy search |
 | `^j` / `^k`, `↑` / `↓` | move |
 | `Enter` | open |
-| `Esc` | normal mode (`j`/`k`, `i` to type, `q` quit) |
+| `Esc` | normal mode (`j`/`k`, `i` to type, `R` reset, `q` quit) |
 | `Tab` | cycle part-of-speech filter |
 | `^o` | return to current page |
 

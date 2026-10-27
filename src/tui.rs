@@ -144,6 +144,7 @@ struct App {
     history: Vec<Visit>,
     at: usize,
     pos: Option<Pos>,
+    launch_pos: Option<Pos>,
     status: Option<(String, bool)>,
     help: bool,
     quit: bool,
@@ -163,10 +164,26 @@ impl App {
             history: Vec::new(),
             at: 0,
             pos,
+            launch_pos: pos,
             status: None,
             help: false,
             quit: false,
         }
+    }
+
+    /// Forget all history and return to the empty search screen, as on a fresh launch.
+    fn reset(&mut self) {
+        self.view = View::Search;
+        self.input.clear();
+        self.insert = true;
+        self.hits.clear();
+        self.hit = 0;
+        self.hit_offset = 0;
+        self.page = None;
+        self.history.clear();
+        self.at = 0;
+        self.pos = self.launch_pos;
+        self.status = None;
     }
 
     fn start(&mut self, initial: &str) -> Result<()> {
@@ -397,6 +414,7 @@ impl App {
                 self.insert = true;
             }
             (Char('f') | Tab, _) => self.cycle_pos()?,
+            (Char('R'), _) => self.reset(),
             (Char('?'), _) => self.help = true,
             (Char('q'), _) => self.quit = true,
             (Esc, _) | (Char('h'), _) if self.page.is_some() => self.view = View::Page,
@@ -457,6 +475,7 @@ impl App {
                 self.view = View::Search;
             }
             (Char('f'), _) => self.cycle_pos()?,
+            (Char('R'), _) => self.reset(),
             (Char('?'), _) => self.help = true,
             (Char('q'), _) => self.quit = true,
             (Esc, _) => self.status = None,
@@ -848,6 +867,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("^o", "return to page"),
         ("global", ""),
         ("f  (tab in search)", "cycle part-of-speech filter"),
+        ("R", "reset: clear history, back to start"),
         ("q / ^c", "quit"),
     ];
     let lines: Vec<Line> = rows
