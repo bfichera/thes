@@ -1,5 +1,5 @@
 [package]
-name = "thes-tui"
+name = "thes"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
@@ -8,18 +8,6 @@ license = "MIT"
 authors = ["Bryan Fichera <bfichera@anl.gov>"]
 repository = "https://github.com/bfichera/thes"
 homepage = "https://github.com/bfichera/thes"
-readme = "README.md"
-keywords = ["thesaurus", "synonyms", "wordnet", "tui", "cli"]
-categories = ["command-line-utilities", "text-processing"]
-include = [
-    "/src",
-    "/tests",
-    "/data/en_thesaurus.jsonl.zst",
-    "/data/SOURCE",
-    "/README.md",
-    "/LICENSE",
-    "/LICENSE-WORDNET",
-]
 
 [lib]
 name = "thes"
@@ -38,7 +26,6 @@ embed-data = []
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 clap_complete = "4"
-clap_mangen = "0.3"
 crossterm = "0.29"
 dirs = "7.0.0"
 ratatui = "0.30"

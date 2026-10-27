@@ -91,9 +91,6 @@ enum Cmd {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
-    /// Print the man page (roff) to stdout.
-    #[command(hide = true)]
-    Man,
 }
 
 fn log(msg: &str) {
@@ -150,10 +147,6 @@ fn run() -> Result<()> {
         Some(Cmd::Completions { shell }) => {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "thes", &mut std::io::stdout());
-            Ok(())
-        }
-        Some(Cmd::Man) => {
-            clap_mangen::Man::new(Cli::command()).render(&mut std::io::stdout())?;
             Ok(())
         }
         Some(Cmd::Search { query, limit, json }) => {

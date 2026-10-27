@@ -4,41 +4,14 @@ A lightning-fast offline thesaurus for the terminal.
 
 ## Install
 
-**macOS / Linux (any distro):**
+macOS and Linux:
 
 ```sh
 curl -fsSL https://github.com/bfichera/thes/releases/latest/download/install.sh | sh
 ```
 
-**Homebrew** (macOS, Linux):
-
-```sh
-brew install bfichera/tap/thes
-```
-
-**Arch Linux** (AUR):
-
-```sh
-yay -S thes-tui-bin
-```
-
-**Debian / Ubuntu:**
-
-```sh
-curl -fsSLO https://github.com/bfichera/thes/releases/latest/download/thes-$(dpkg --print-architecture).deb && sudo apt install ./thes-*.deb
-```
-
-**Fedora / RHEL:**
-
-```sh
-sudo dnf install https://github.com/bfichera/thes/releases/latest/download/thes-$(uname -m).rpm
-```
-
-**Cargo:**
-
-```sh
-cargo install thes-tui
-```
+This installs to `~/.local/bin` (set `THES_INSTALL_DIR` to change it, or
+`THES_VERSION=0.1.0` to pin a version).
 
 The WordNet data ships inside the binary, so `thes` works offline right away. On
 first run it builds its database and index in about a second.
@@ -136,15 +109,8 @@ data with curl on first run), use `cargo install --path . --no-default-features`
 2. `git tag v0.2.0 && git push --tags`
 
 `.github/workflows/release.yml` builds macOS (arm64, x86_64) and static Linux
-(x86_64, aarch64) binaries. It attaches tarballs, `.deb`, `.rpm`, `install.sh`
-and `SHA256SUMS` to the GitHub release, then updates these channels when their
-secrets are set:
-
-| channel | secret | setup |
-|---|---|---|
-| Homebrew | `HOMEBREW_TAP_TOKEN` | create the repo `bfichera/homebrew-tap`, then a fine-grained token with write access to it |
-| AUR | `AUR_SSH_KEY` | private key whose public half is on your AUR account. The first push creates `thes-tui-bin`. |
-| crates.io | `CARGO_REGISTRY_TOKEN` | crates.io API token |
+(x86_64, aarch64) binaries and attaches them, `install.sh` and `SHA256SUMS` to
+the GitHub release.
 
 ## License
 
