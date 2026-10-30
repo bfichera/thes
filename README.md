@@ -11,7 +11,7 @@ curl -fsSL https://github.com/bfichera/thes/releases/latest/download/install.sh 
 ```
 
 This installs to `~/.local/bin` (set `THES_INSTALL_DIR` to change it, or
-`THES_VERSION=0.1.0` to pin a version).
+`THES_VERSION=0.2.0` to pin a version).
 
 The WordNet data ships inside the binary, so `thes` works offline right away. On
 first run it builds its database and index in about a second.
@@ -36,13 +36,14 @@ Queries accept inline filters anywhere: `pos:<noun|verb|adj|adv>` (also `p:`) an
 
 | page | |
 |---|---|
-| `j` / `k` | next / previous sense |
-| `h` / `l` (`b` / `w`) | previous / next synonym (wraps across senses) |
-| `0` / `$`, `g` / `G` | first / last synonym; first / last sense |
-| `^d` / `^u` | jump 5 senses |
-| `Enter` | open the selected synonym's page |
+| `j` / `k` | previous / next sense (or word, when the word list is focused); take a count: `10j`, `5k` |
+| `l` / `→` | focus the word list on the right |
+| `h` / `←`, `Esc` | back to the sense list |
+| `0` / `$`, `g` / `G` | first / last word; first / last sense (`3G` jumps to the 3rd) |
+| `^d` / `^u` | half a page down / up |
+| `Enter` | open the selected word's page (in the word list) |
 | `^o` / `Backspace`, `Tab` | back, forward (jumplist) |
-| `y` / `Y` | yank synonym / page word |
+| `y` / `Y` | yank word / page word |
 | `/` or `s` | search |
 | `f` | cycle part-of-speech filter |
 | `R` | reset: clear history and return to the start screen |
@@ -87,7 +88,7 @@ different headword (e.g. `happy` shows the `glad_3` sense where it appears as a 
 
 ## How it works
 
-- **Data**: [zaibacu/thesaurus](https://github.com/zaibacu/thesaurus) (WordNet 3.0, ~118k senses, ~148k words)
+- **Data**: [zaibacu/thesaurus](https://github.com/zaibacu/thesaurus) (WordNet 3.0, ~118k senses, ~148k words), WordNet relations (similar-to, see-also, broader/narrower) for the `related` row, and the public-domain Moby Thesaurus II, filtered per sense through WordNet (see `src/more.rs`), for the `more` row
 - **Storage**: embedded [Turso](https://github.com/tursodatabase/turso) database (`thes.db`)
 - **Search**: [Tantivy](https://github.com/quickwit-oss/tantivy) fuzzy/prefix index
 - **UI**: [ratatui](https://ratatui.rs) browser with vim keys
@@ -115,4 +116,4 @@ the GitHub release.
 
 ## License
 
-Code: MIT ([LICENSE](LICENSE)). Data: WordNet 3.0 license, Princeton University ([LICENSE-WORDNET](LICENSE-WORDNET)).
+Code: MIT ([LICENSE](LICENSE)). Data: WordNet 3.0 license, Princeton University ([LICENSE-WORDNET](LICENSE-WORDNET)); Moby Thesaurus II is public domain.

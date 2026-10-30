@@ -140,6 +140,29 @@ pub struct Sense {
     pub examples: Vec<String>,
     /// Synonyms for the page's word in this sense.
     pub synonyms: Vec<String>,
+    /// Looser neighbours from related synsets (similar, see also, broader, narrower).
+    pub related: Vec<String>,
+    /// Wider, sense-filtered words from Moby Thesaurus.
+    pub more: Vec<String>,
+}
+
+impl Sense {
+    /// Number of selectable words: synonyms, then related, then more.
+    pub fn chip_count(&self) -> usize {
+        self.synonyms.len() + self.related.len() + self.more.len()
+    }
+
+    /// The `i`th selectable word.
+    pub fn chip(&self, i: usize) -> Option<&str> {
+        let mut i = i;
+        for group in [&self.synonyms, &self.related, &self.more] {
+            if i < group.len() {
+                return Some(&group[i]);
+            }
+            i -= group.len();
+        }
+        None
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -12,6 +12,7 @@
 
 pub mod ingest;
 pub mod model;
+pub mod more;
 pub mod paths;
 pub mod search;
 pub mod store;
@@ -117,6 +118,8 @@ fn to_sense(r: SenseRow, lemma: &str) -> Sense {
             .into_iter()
             .filter(|l| l.to_lowercase() != lemma)
             .collect(),
+        related: r.related,
+        more: r.more,
         key: r.key,
         pos: r.pos,
         headword: r.word,

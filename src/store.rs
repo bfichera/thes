@@ -16,7 +16,9 @@ CREATE TABLE senses (
     wordnet_id TEXT NOT NULL,
     gloss TEXT NOT NULL,
     examples TEXT NOT NULL,
-    lemmas TEXT NOT NULL
+    lemmas TEXT NOT NULL,
+    related TEXT NOT NULL,
+    more TEXT NOT NULL
 );
 CREATE TABLE members (lemma TEXT NOT NULL, sid INTEGER NOT NULL);
 ";
@@ -26,7 +28,7 @@ CREATE UNIQUE INDEX senses_key ON senses(key);
 CREATE INDEX members_lemma ON members(lemma, sid);
 ";
 
-const SENSE_COLS: &str = "s.id, s.key, s.word, s.pos, s.gloss, s.examples, s.lemmas";
+const SENSE_COLS: &str = "s.id, s.key, s.word, s.pos, s.gloss, s.examples, s.lemmas, s.related, s.more";
 
 /// A sense as stored, with every member of its synset.
 #[derive(Debug, Clone)]
@@ -39,6 +41,10 @@ pub struct SenseRow {
     pub examples: Vec<String>,
     /// Display forms of all synset members, headword first.
     pub lemmas: Vec<String>,
+    /// Display forms of words from related synsets (similar, see also, broader, narrower).
+    pub related: Vec<String>,
+    /// Display forms of sense-filtered Moby words, best first.
+    pub more: Vec<String>,
 }
 
 pub struct Store {
@@ -96,6 +102,8 @@ impl Store {
                 let pos: String = row.get(3)?;
                 let examples: String = row.get(5)?;
                 let lemmas: String = row.get(6)?;
+                let related: String = row.get(7)?;
+                let more: String = row.get(8)?;
                 out.push(SenseRow {
                     id: row.get(0)?,
                     key: row.get(1)?,
@@ -108,6 +116,8 @@ impl Store {
                         .map(str::to_string)
                         .collect(),
                     lemmas: lemmas.split(' ').map(str::to_string).collect(),
+                    related: split_words(&related),
+                    more: split_words(&more),
                 });
             }
             Ok(out)
@@ -115,10 +125,21 @@ impl Store {
     }
 }
 
+fn split_words(s: &str) -> Vec<String> {
+    s.split(' ').filter(|s| !s.is_empty()).map(str::to_string).collect()
+}
+
 /// Write a fresh database at `path` from sorted entries.
 ///
 /// `forms(entry)` yields the display form of each synset member, headword first.
-pub fn write<'a, F>(path: &Path, entries: &'a [Entry], forms: F, meta: &[(&str, String)]) -> Result<()>
+pub fn write<'a, F>(
+    path: &Path,
+    entries: &'a [Entry],
+    forms: F,
+    related: &[Vec<String>],
+    more: &[Vec<String>],
+    meta: &[(&str, String)],
+) -> Result<()>
 where
     F: Fn(&'a Entry) -> Vec<String>,
 {
@@ -136,8 +157,8 @@ where
             }
             let mut sense = conn
                 .prepare(
-                    "INSERT INTO senses (id, key, word, pos, wordnet_id, gloss, examples, lemmas) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    "INSERT INTO senses (id, key, word, pos, wordnet_id, gloss, examples, lemmas, related, more) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 )
                 .await?;
             let mut member = conn
@@ -162,6 +183,8 @@ where
                         e.gloss.as_str(),
                         examples,
                         lemmas,
+                        related[i].join(" "),
+                        more[i].join(" "),
                     ))
                     .await?;
                 for lemma in e.lemmas() {

@@ -63,6 +63,14 @@ fn write_sense(out: &mut impl Write, i: usize, s: &Sense) -> Result<()> {
         let syns: Vec<_> = s.synonyms.iter().map(|x| display(x)).collect();
         writeln!(out, "           {}", paint!(syns.join(", "), cyan))?;
     }
+    if !s.related.is_empty() {
+        let rel: Vec<_> = s.related.iter().map(|x| display(x)).collect();
+        writeln!(out, "           {} {}", paint!("related:", dim), paint!(rel.join(", "), blue))?;
+    }
+    if !s.more.is_empty() {
+        let more: Vec<_> = s.more.iter().map(|x| display(x)).collect();
+        writeln!(out, "           {} {}", paint!("more:", dim), paint!(more.join(", "), blue))?;
+    }
     writeln!(out, "           {}", paint!(s.key, dark_grey))?;
     Ok(())
 }

@@ -2,3 +2,6 @@ zaibacu/thesaurus en_thesaurus.jsonl
 commit 3081c482a70a3fc21c538612c647fa8038e28a1a
 sha256 (uncompressed) 6f0daa359ba86a0afc8c8045c1bd5742567520f37c21b0a953df1993dc2990b6
 WordNet 3.0, Princeton University. See LICENSE-WORDNET.
+
+data/en_relations.tsv.zst: WordNet 3.0 relations, made by scripts/gen_relations.py
+data/moby.txt.zst: Moby Thesaurus II (public domain), Project Gutenberg #3202 mthesaur.txt, converted to UTF-8

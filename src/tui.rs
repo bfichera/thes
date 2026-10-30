@@ -13,7 +13,7 @@ const ACCENT: Color = Color::Rgb(255, 135, 0);
 const CHIP: Color = Color::Rgb(130, 190, 255);
 const DIM: Color = Color::Rgb(120, 120, 120);
 const FAINT: Color = Color::Rgb(80, 80, 80);
-const MAX_WIDTH: u16 = 100;
+const MAX_WIDTH: u16 = 130;
 const SEARCH_LIMIT: usize = 100;
 
 pub fn run(t: Thesaurus, initial: &str, pos: Option<Pos>) -> Result<()> {
@@ -37,11 +37,18 @@ struct PageView {
     sense: usize,
     syn: usize,
     scroll: usize,
+    /// Keys act on the word list (right pane) instead of the sense list.
+    focus_words: bool,
+    wscroll: usize,
+    /// Line range of each sense and pane heights from the last draw, for half-page jumps.
+    spans: Vec<(usize, usize)>,
+    left_h: usize,
+    right_h: usize,
 }
 
 impl PageView {
     fn selectable(&self, i: usize) -> bool {
-        self.page.senses.get(i).is_some_and(|s| !s.synonyms.is_empty())
+        self.page.senses.get(i).is_some_and(|s| s.chip_count() > 0)
     }
 
     fn first(&self) -> Option<usize> {
@@ -64,16 +71,18 @@ impl PageView {
                 }
             }
         }
-        let n = self.page.senses[self.sense].synonyms.len();
+        let n = self.page.senses[self.sense].chip_count();
         self.syn = self.syn.min(n.saturating_sub(1));
     }
 
     fn selected(&self) -> Option<&str> {
+        if !self.focus_words {
+            return None;
+        }
         self.page
             .senses
             .get(self.sense)
-            .and_then(|s| s.synonyms.get(self.syn))
-            .map(String::as_str)
+            .and_then(|s| s.chip(self.syn))
     }
 
     fn move_sense(&mut self, delta: isize) {
@@ -99,29 +108,48 @@ impl PageView {
         }
         if i != self.sense {
             self.sense = i;
+            self.syn = 0;
+            self.wscroll = 0;
             self.clamp();
         }
     }
 
     fn move_syn(&mut self, delta: isize) {
-        let Some(s) = self.page.senses.get(self.sense) else { return };
-        if s.synonyms.is_empty() {
+        let n = self.page.senses.get(self.sense).map_or(0, |s| s.chip_count());
+        if n > 0 {
+            self.syn = self.syn.saturating_add_signed(delta).min(n - 1);
+        }
+    }
+
+    /// Move half a pane down (`dir` > 0) or up, like vim's ^d / ^u.
+    fn half_page(&mut self, dir: isize) {
+        if self.focus_words {
+            let step = (self.right_h / 2).max(1) as isize;
+            self.move_syn(dir * step);
             return;
         }
-        if delta > 0 {
-            if self.syn + 1 < s.synonyms.len() {
-                self.syn += 1;
-            } else if let Some(j) =
-                (self.sense + 1..self.page.senses.len()).find(|&j| self.selectable(j))
-            {
-                self.sense = j;
-                self.syn = 0;
-            }
-        } else if self.syn > 0 {
-            self.syn -= 1;
-        } else if let Some(j) = (0..self.sense).rev().find(|&j| self.selectable(j)) {
-            self.sense = j;
-            self.syn = self.page.senses[j].synonyms.len() - 1;
+        let Some(&(start, _)) = self.spans.get(self.sense) else { return };
+        let half = (self.left_h / 2).max(1);
+        let target = if dir > 0 { start + half } else { start.saturating_sub(half) };
+        let n = self.page.senses.len();
+        let pick = if dir > 0 {
+            (self.sense + 1..n).rev().find(|&i| self.selectable(i) && self.spans[i].0 <= target)
+        } else {
+            (0..self.sense).find(|&i| self.selectable(i) && self.spans[i].0 >= target)
+        };
+        let dest = pick.or_else(|| if dir > 0 { self.last() } else { self.first() });
+        if let Some(d) = dest.filter(|&d| (dir > 0 && d > self.sense) || (dir < 0 && d < self.sense)) {
+            self.sense = d;
+            self.syn = 0;
+            self.wscroll = 0;
+            self.clamp();
+        }
+    }
+
+    fn expand(&mut self) {
+        if self.selectable(self.sense) {
+            self.focus_words = true;
+            self.syn = 0;
         }
     }
 }
@@ -148,6 +176,8 @@ struct App {
     status: Option<(String, bool)>,
     help: bool,
     quit: bool,
+    /// Pending vim-style count prefix, e.g. the `10` in `10j`.
+    count: Option<usize>,
 }
 
 impl App {
@@ -168,6 +198,7 @@ impl App {
             status: None,
             help: false,
             quit: false,
+            count: None,
         }
     }
 
@@ -184,6 +215,7 @@ impl App {
         self.at = 0;
         self.pos = self.launch_pos;
         self.status = None;
+        self.count = None;
     }
 
     fn start(&mut self, initial: &str) -> Result<()> {
@@ -258,7 +290,7 @@ impl App {
         if page.is_empty() {
             return Ok(false);
         }
-        let mut pv = PageView { page, sense: visit.sense, syn: visit.syn, scroll: 0 };
+        let mut pv = PageView { page, sense: visit.sense, syn: visit.syn, scroll: 0, focus_words: false, wscroll: 0, spans: Vec::new(), left_h: 0, right_h: 0 };
         if visit.sense == usize::MAX {
             pv.sense = pv.first().unwrap_or(0);
             pv.syn = 0;
@@ -425,6 +457,15 @@ impl App {
 
     fn page_key(&mut self, k: KeyEvent, ctrl: bool) -> Result<()> {
         use KeyCode::*;
+        if let (Char(c @ '0'..='9'), false) = (k.code, ctrl)
+            && (c != '0' || self.count.is_some())
+        {
+            let d = c as usize - '0' as usize;
+            self.count = Some(self.count.unwrap_or(0).saturating_mul(10).saturating_add(d).min(100_000));
+            return Ok(());
+        }
+        let n = self.count.take();
+        let cnt = n.unwrap_or(1) as isize;
         let Some(p) = self.page.as_mut() else {
             self.view = View::Search;
             return Ok(());
@@ -432,25 +473,42 @@ impl App {
         match (k.code, ctrl) {
             (Char('o'), true) | (Backspace, _) | (Char('-'), false) => self.jump(-1)?,
             (Char('i'), true) | (Tab, _) => self.jump(1)?,
-            (Char('d'), true) => p.move_sense(5),
-            (Char('u'), true) => p.move_sense(-5),
-            (Char('j'), _) | (Down, _) | (Char('n'), true) => p.move_sense(1),
-            (Char('k'), _) | (Up, _) | (Char('p'), true) => p.move_sense(-1),
-            (Char('l' | 'w'), _) | (Right, _) => p.move_syn(1),
-            (Char('h' | 'b'), _) | (Left, _) => p.move_syn(-1),
-            (Char('0' | '^'), _) | (Home, _) => p.syn = 0,
-            (Char('$'), _) | (End, _) => {
+            (Char('d'), true) => p.half_page(1),
+            (Char('u'), true) => p.half_page(-1),
+            (Char('j'), _) | (Down, _) | (Char('n'), true) => {
+                if p.focus_words { p.move_syn(cnt) } else { p.move_sense(cnt) }
+            }
+            (Char('k'), _) | (Up, _) | (Char('p'), true) => {
+                if p.focus_words { p.move_syn(-cnt) } else { p.move_sense(-cnt) }
+            }
+            (Char('l'), _) | (Right, _) if !p.focus_words => p.expand(),
+            (Char('h'), _) | (Left, _) if p.focus_words => p.focus_words = false,
+            (Char('0' | '^'), _) | (Home, _) if p.focus_words => p.syn = 0,
+            (Char('$'), _) | (End, _) if p.focus_words => {
                 if let Some(s) = p.page.senses.get(p.sense) {
-                    p.syn = s.synonyms.len().saturating_sub(1);
+                    p.syn = s.chip_count().saturating_sub(1);
                 }
             }
-            (Char('g'), _) => {
-                p.sense = p.first().unwrap_or(0);
-                p.syn = 0;
-            }
-            (Char('G'), _) => {
-                p.sense = p.last().unwrap_or(0);
-                p.syn = 0;
+            (Char('g' | 'G'), _) => {
+                let last = k.code == Char('G');
+                if p.focus_words {
+                    let max = p.page.senses.get(p.sense).map_or(0, |s| s.chip_count().saturating_sub(1));
+                    p.syn = match (n, last) {
+                        (Some(n), _) => (n - 1).min(max),
+                        (None, true) => max,
+                        (None, false) => 0,
+                    };
+                } else {
+                    let max = p.page.senses.len().saturating_sub(1);
+                    p.sense = match (n, last) {
+                        (Some(n), _) => (n - 1).min(max),
+                        (None, true) => p.last().unwrap_or(0),
+                        (None, false) => p.first().unwrap_or(0),
+                    };
+                    p.syn = 0;
+                    p.wscroll = 0;
+                    p.clamp();
+                }
             }
             (Enter, _) => {
                 if let Some(w) = p.selected().map(str::to_string) {
@@ -478,7 +536,13 @@ impl App {
             (Char('R'), _) => self.reset(),
             (Char('?'), _) => self.help = true,
             (Char('q'), _) => self.quit = true,
-            (Esc, _) => self.status = None,
+            (Esc, _) => {
+                if p.focus_words {
+                    p.focus_words = false;
+                } else {
+                    self.status = None;
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -622,9 +686,17 @@ impl App {
 
     fn draw_page(&mut self, f: &mut Frame, area: Rect) {
         let Some(p) = self.page.as_mut() else { return };
-        let width = area.width as usize;
-        let (lines, sense_spans, sel_line) = layout_page(p, width);
-        let h = area.height as usize;
+        let lw = (area.width * 3 / 5).max(30).min(area.width);
+        let [left, gap, right] = Layout::horizontal([
+            Constraint::Length(lw),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .areas(area);
+        let (lines, sense_spans, sel_line) = layout_page(p, left.width as usize);
+        let h = left.height as usize;
+        p.spans = sense_spans.clone();
+        p.left_h = h;
 
         if let Some((start, end)) = sense_spans.get(p.sense).copied() {
             let is_first = p.first() == Some(p.sense);
@@ -645,22 +717,59 @@ impl App {
             }
         }
         p.scroll = p.scroll.min(lines.len().saturating_sub(1));
-        f.render_widget(Paragraph::new(lines).scroll((p.scroll as u16, 0)), area);
+        f.render_widget(Paragraph::new(lines).scroll((p.scroll as u16, 0)), left);
+
+        let divider: Vec<Line> = (0..gap.height)
+            .map(|_| Line::styled("│", Style::new().fg(FAINT)))
+            .collect();
+        f.render_widget(Paragraph::new(divider), gap);
+
+        let count = p.page.senses.get(p.sense).map_or(0, |s| s.chip_count());
+        let [head, list] =
+            Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).areas(right);
+        let title = match count {
+            0 => "no words".to_string(),
+            1 => "1 word".to_string(),
+            n => format!("{n} words"),
+        };
+        f.render_widget(
+            Line::styled(format!(" {title}"), Style::new().fg(if p.focus_words { ACCENT } else { DIM })),
+            Rect { y: head.y + 1, height: 1, ..head },
+        );
+        let lh = list.height as usize;
+        p.right_h = lh;
+        if p.syn < p.wscroll {
+            p.wscroll = p.syn;
+        }
+        if p.syn >= p.wscroll + lh {
+            p.wscroll = p.syn + 1 - lh;
+        }
+        p.wscroll = p.wscroll.min(count.saturating_sub(lh));
+        let Some(sense) = p.page.senses.get(p.sense) else { return };
+        let words: Vec<Line> = (p.wscroll..count.min(p.wscroll + lh))
+            .map(|k| {
+                let word = display(sense.chip(k).unwrap_or_default());
+                let style = if p.focus_words && k == p.syn {
+                    Style::new().fg(Color::Black).bg(ACCENT).bold()
+                } else {
+                    Style::new().fg(CHIP)
+                };
+                Line::from(Span::styled(format!(" {word} "), style))
+            })
+            .collect();
+        f.render_widget(Paragraph::new(words), list);
     }
 
     fn draw_footer(&self, f: &mut Frame, area: Rect) {
         let (left, left_style) = match &self.status {
+            _ if self.count.is_some() && self.view == View::Page => (
+                self.count.unwrap_or(0).to_string(),
+                Style::new().fg(ACCENT),
+            ),
             Some((m, true)) => (m.clone(), Style::new().fg(Color::Red)),
             Some((m, false)) => (m.clone(), Style::new().fg(ACCENT)),
             None => match self.view {
-                View::Page => (
-                    self.page
-                        .as_ref()
-                        .and_then(|p| p.page.senses.get(p.sense))
-                        .map(|s| s.key.clone())
-                        .unwrap_or_default(),
-                    Style::new().fg(FAINT),
-                ),
+                View::Page => (String::new(), Style::new()),
                 View::Search => (
                     if self.insert { "INSERT" } else { "NORMAL" }.to_string(),
                     Style::new().fg(if self.insert { ACCENT } else { DIM }),
@@ -669,9 +778,9 @@ impl App {
         };
         let hints: &[(&str, &str)] = match (&self.view, self.insert) {
             (View::Page, _) => &[
-                ("j/k", "sense"),
-                ("h/l", "word"),
-                ("⏎", "open"),
+                ("j/k", "move"),
+                ("l", "words"),
+                ("h", "senses"),
                 ("^o/tab", "back/fwd"),
                 ("/", "search"),
                 ("f", "pos"),
@@ -696,11 +805,8 @@ impl App {
             spans.push(Span::styled(*k, Style::new().fg(ACCENT)));
             spans.push(Span::styled(format!(" {v}  "), Style::new().fg(DIM)));
         }
-        let right = Line::from(spans).right_aligned();
-        let lw = (left.width() as u16 + 2).min(area.width / 2);
-        let [l, r] = Layout::horizontal([Constraint::Length(lw), Constraint::Min(0)]).areas(area);
-        f.render_widget(Line::styled(format!(" {left}"), left_style), l);
-        f.render_widget(right, r);
+        f.render_widget(Line::styled(format!(" {left}"), left_style), area);
+        f.render_widget(Line::from(spans).centered(), area);
     }
 }
 
@@ -745,7 +851,7 @@ fn layout_page(p: &PageView, width: usize) -> (Vec<Line<'static>>, Vec<(usize, u
             ]));
         }
         n += 1;
-        let active = i == p.sense && p.selected().is_some();
+        let active = i == p.sense;
         let gutter = || {
             if active {
                 Span::styled("▎", Style::new().fg(ACCENT))
@@ -764,39 +870,8 @@ fn layout_page(p: &PageView, width: usize) -> (Vec<Line<'static>>, Vec<(usize, u
                 Span::styled(g, Style::new().fg(if active { Color::White } else { Color::Gray })),
             ]));
         }
-        for ex in &s.examples {
-            for g in wrap(&format!("“{ex}”"), body) {
-                lines.push(Line::from(vec![
-                    gutter(),
-                    Span::raw(" ".repeat(INDENT - 1)),
-                    Span::styled(g, Style::new().fg(DIM).italic()),
-                ]));
-            }
-        }
-        if !s.synonyms.is_empty() {
-            let mut row: Vec<Span<'static>> = vec![gutter(), Span::raw(" ".repeat(INDENT - 2))];
-            let mut w = INDENT - 1;
-            for (k, syn) in s.synonyms.iter().enumerate() {
-                let label = format!(" {} ", display(syn));
-                let lw = label.width();
-                if w + lw > width && w > INDENT - 1 {
-                    lines.push(Line::from(std::mem::take(&mut row)));
-                    row = vec![gutter(), Span::raw(" ".repeat(INDENT - 2))];
-                    w = INDENT - 1;
-                }
-                let selected = active && k == p.syn;
-                let style = if selected {
-                    sel_line = lines.len();
-                    Style::new().fg(Color::Black).bg(ACCENT).bold()
-                } else if active {
-                    Style::new().fg(CHIP).underlined()
-                } else {
-                    Style::new().fg(CHIP)
-                };
-                row.push(Span::styled(label, style));
-                w += lw;
-            }
-            lines.push(Line::from(row));
+        if active {
+            sel_line = start;
         }
         spans_out[i] = (start, lines.len());
     }
@@ -851,11 +926,14 @@ fn draw_help(f: &mut Frame, area: Rect) {
     let rows = [
         ("page", ""),
         ("j / k", "next / previous sense"),
-        ("h / l  (b / w)", "previous / next synonym"),
-        ("0 / $", "first / last synonym in sense"),
-        ("g / G", "first / last sense"),
-        ("^d / ^u", "jump 5 senses"),
-        ("enter", "open selected synonym"),
+        ("l", "move to the word list on the right"),
+        ("h / esc", "back to the sense list"),
+        ("j / k", "in the word list: next / previous word"),
+        ("0 / $", "in the word list: first / last word"),
+        ("g / G", "first / last sense (or word)"),
+        ("^d / ^u", "half page down / up"),
+        ("5j / 10k", "move by a count (also 3G, 3g)"),
+        ("enter", "in the word list: open selected word"),
         ("^o / backspace", "back"),
         ("tab / ^i", "forward"),
         ("y / Y", "yank synonym / page word"),

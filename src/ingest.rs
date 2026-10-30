@@ -2,10 +2,11 @@
 
 use crate::model::{Entry, Pos, RawEntry};
 use crate::paths::{DEFAULT_SOURCE, Paths, SCHEMA_VERSION};
+use crate::more;
 use crate::search::{self, LemmaDoc};
 use crate::store;
 use anyhow::{Context, Result, bail};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -56,6 +57,45 @@ impl Source {
 
 #[cfg(feature = "embed-data")]
 const EMBEDDED: &[u8] = include_bytes!("../data/en_thesaurus.jsonl.zst");
+
+#[cfg(feature = "embed-data")]
+const EMBEDDED_MOBY: &[u8] = include_bytes!("../data/moby.txt.zst");
+
+#[cfg(feature = "embed-data")]
+const EMBEDDED_RELATIONS: &[u8] = include_bytes!("../data/en_relations.tsv.zst");
+
+/// Most related words kept per sense.
+const MAX_RELATED: usize = 40;
+
+/// Moby Thesaurus text. Only the embedded source ships it.
+fn read_moby(source: &Source) -> Result<Option<String>> {
+    #[cfg(feature = "embed-data")]
+    if matches!(source, Source::Embedded) {
+        let mut text = String::new();
+        zstd_reader(EMBEDDED_MOBY)?.read_to_string(&mut text)?;
+        return Ok(Some(text));
+    }
+    let _ = source;
+    Ok(None)
+}
+
+/// Synset relations as `(from_key, kind, to_key)`. Only the embedded source ships them.
+fn read_relations(source: &Source) -> Result<Vec<(String, String, String)>> {
+    #[cfg(feature = "embed-data")]
+    if matches!(source, Source::Embedded) {
+        let mut text = String::new();
+        zstd_reader(EMBEDDED_RELATIONS)?.read_to_string(&mut text)?;
+        return Ok(text
+            .lines()
+            .filter_map(|l| {
+                let mut it = l.split('\t');
+                Some((it.next()?.into(), it.next()?.into(), it.next()?.into()))
+            })
+            .collect());
+    }
+    let _ = source;
+    Ok(Vec::new())
+}
 
 fn zstd_reader<R: Read>(r: R) -> Result<impl Read> {
     ruzstd::decoding::StreamingDecoder::new(r)
@@ -151,13 +191,78 @@ pub fn build(paths: &Paths, source: &Source, log: &dyn Fn(&str)) -> Result<Repor
     }
 
     // Headwords keep their capitalisation (e.g. "Paris"); synonyms are lowercase in the
-    // source, so borrow the headword's casing for display wherever it exists.
+    // source, so borrow the headword's casing for display wherever it exists. A
+    // lowercase headword wins over "BASIC" / "Capital" style ones, and WordNet's
+    // `(a)` markers are dropped.
     let mut display: HashMap<String, &str> = HashMap::new();
     for e in &entries {
-        display.entry(e.word.to_lowercase()).or_insert(&e.word);
+        let name = more::strip_marker(&e.word);
+        let slot = display.entry(name.to_lowercase()).or_insert(name);
+        if *slot != name && name.chars().all(|c| !c.is_uppercase()) {
+            *slot = name;
+        }
     }
     let form = |lemma: &str, orig: &'_ str| -> String {
-        display.get(lemma).map(|s| s.to_string()).unwrap_or_else(|| orig.to_string())
+        let c = more::clean(lemma);
+        display.get(&c).map(|s| s.to_string()).unwrap_or_else(|| more::strip_marker(orig).to_string())
+    };
+
+    // Words from similar / see-also / broader synsets, nearest relation first.
+    let index: HashMap<&str, usize> =
+        entries.iter().enumerate().map(|(i, e)| (e.key.as_str(), i)).collect();
+    let mut linked: Vec<[Vec<usize>; 3]> = vec![Default::default(); entries.len()];
+    for (from, kind, to) in read_relations(source)? {
+        let slot = match kind.as_str() {
+            "sim" => 0,
+            "see" => 1,
+            "hyper" => 2,
+            _ => continue,
+        };
+        if let (Some(&a), Some(&b)) = (index.get(from.as_str()), index.get(to.as_str())) {
+            linked[a][slot].push(b);
+            if slot < 2 {
+                linked[b][slot].push(a);
+            }
+        }
+    }
+    let nbrs: Vec<Vec<usize>> = linked.iter().map(|g| g.iter().flatten().copied().collect()).collect();
+    let related: Vec<Vec<String>> = entries
+        .iter()
+        .zip(&linked)
+        .map(|(e, groups)| {
+            let mut seen: BTreeSet<String> = e.lemmas().map(|l| more::clean(&l)).collect();
+            let mut out = Vec::new();
+            for &j in groups.iter().flatten() {
+                let t = &entries[j];
+                for (lemma, orig) in t.lemmas().zip(std::iter::once(&t.word).chain(&t.synonyms)) {
+                    if out.len() < MAX_RELATED && seen.insert(more::clean(&lemma)) {
+                        out.push(form(&lemma, orig));
+                    }
+                }
+            }
+            out
+        })
+        .collect();
+
+    let more: Vec<Vec<String>> = match read_moby(source)? {
+        Some(text) => {
+            let moby = more::Moby::parse(&text);
+            let shown: Vec<HashSet<String>> = entries
+                .iter()
+                .zip(&related)
+                .map(|(e, rel)| {
+                    e.lemmas()
+                        .map(|l| more::clean(&l))
+                        .chain(rel.iter().map(|r| more::clean(r)))
+                        .collect()
+                })
+                .collect();
+            more::compute(&entries, &nbrs, &shown, &moby)
+                .into_iter()
+                .map(|v| v.into_iter().map(|w| form(&w, &w)).collect())
+                .collect()
+        }
+        None => vec![Vec::new(); entries.len()],
     };
 
     let parent = paths.root.clone();
@@ -180,11 +285,17 @@ pub fn build(paths: &Paths, source: &Source, log: &dyn Fn(&str)) -> Result<Repor
         &tmp_paths.db(),
         &entries,
         |e| {
-            std::iter::once(&e.word)
-                .chain(e.synonyms.iter())
-                .map(|s| form(&s.to_lowercase(), s))
-                .collect()
+            let mut forms = vec![form(&e.word.to_lowercase(), &e.word)];
+            let mut seen = HashSet::from([more::clean(&e.word)]);
+            for s in &e.synonyms {
+                if seen.insert(more::clean(s)) {
+                    forms.push(form(&s.to_lowercase(), s));
+                }
+            }
+            forms
         },
+        &related,
+        &more,
         &meta,
     )?;
 

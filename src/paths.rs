@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 /// Bump whenever the on-disk layout of the database or index changes.
-pub const SCHEMA_VERSION: &str = "2";
+pub const SCHEMA_VERSION: &str = "4";
 
 pub fn stamp() -> String {
     format!("{SCHEMA_VERSION} {}", env!("CARGO_PKG_VERSION"))
