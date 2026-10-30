@@ -105,15 +105,6 @@ cargo install --path .
 To build without the embedded data (smaller binary that downloads the
 data with curl on first run), use `cargo install --path . --no-default-features`.
 
-## Releasing
-
-1. Bump `version` in `Cargo.toml`, commit.
-2. `git tag v0.2.0 && git push --tags`
-
-`.github/workflows/release.yml` builds macOS (arm64, x86_64) and static Linux
-(x86_64, aarch64) binaries and attaches them, `install.sh` and `SHA256SUMS` to
-the GitHub release.
-
 ## License
 
 Code: MIT ([LICENSE](LICENSE)). Data: WordNet 3.0 license, Princeton University ([LICENSE-WORDNET](LICENSE-WORDNET)); Moby Thesaurus II is public domain.
