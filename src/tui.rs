@@ -48,6 +48,10 @@ struct PageView {
 
 impl PageView {
     fn selectable(&self, i: usize) -> bool {
+        i < self.page.senses.len()
+    }
+
+    fn has_words(&self, i: usize) -> bool {
         self.page.senses.get(i).is_some_and(|s| s.chip_count() > 0)
     }
 
@@ -147,7 +151,7 @@ impl PageView {
     }
 
     fn expand(&mut self) {
-        if self.selectable(self.sense) {
+        if self.has_words(self.sense) {
             self.focus_words = true;
             self.syn = 0;
         }
