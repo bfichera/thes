@@ -11,7 +11,7 @@ curl -fsSL https://github.com/bfichera/thes/releases/latest/download/install.sh 
 ```
 
 This installs to `~/.local/bin` (set `THES_INSTALL_DIR` to change it, or
-`THES_VERSION=1.0.0` to pin a version).
+`THES_VERSION=1.0.2` to pin a version).
 
 The WordNet data ships inside the binary, so `thes` works offline right away. On
 first run it builds its database and index in about a second.

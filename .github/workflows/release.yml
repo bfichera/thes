@@ -14,10 +14,10 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
-          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
-          - { target: aarch64-apple-darwin, os: macos-latest }
-          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { name: linux-x86_64, os: ubuntu-latest, targets: x86_64-unknown-linux-musl }
+          - { name: linux-aarch64, os: ubuntu-24.04-arm, targets: aarch64-unknown-linux-musl }
+          # One macOS runner builds both targets, since macOS runners are scarce.
+          - { name: macos, os: macos-latest, targets: "aarch64-apple-darwin x86_64-apple-darwin" }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -28,19 +28,25 @@ jobs:
           test "v$version" = "$GITHUB_REF_NAME"
 
       - name: Install musl toolchain
-        if: contains(matrix.target, 'musl')
+        if: contains(matrix.targets, 'musl')
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
-          echo "CC_$(echo '${{ matrix.target }}' | tr - _)=musl-gcc" >> "$GITHUB_ENV"
+          echo "CC_$(echo '${{ matrix.targets }}' | tr - _)=musl-gcc" >> "$GITHUB_ENV"
 
-      - run: rustup target add ${{ matrix.target }}
-      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Build
+        run: |
+          for target in ${{ matrix.targets }}; do
+            rustup target add "$target"
+            cargo build --release --locked --target "$target"
+            mkdir -p "stage/thes-$target"
+            cp "target/$target/release/thes" "stage/thes-$target/thes"
+          done
 
       - uses: actions/upload-artifact@v7
         with:
-          name: thes-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/thes
+          name: build-${{ matrix.name }}
+          path: stage
           if-no-files-found: error
 
   publish:
@@ -52,6 +58,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: bin
+          merge-multiple: true
 
       - name: Package
         run: |
