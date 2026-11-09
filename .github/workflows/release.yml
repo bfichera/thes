@@ -62,7 +62,7 @@ jobs:
             cp LICENSE LICENSE-WORDNET README.md "$dir/"
             tar -C bin -czf "dist/$name.tar.gz" "$name"
           done
-          cp scripts/install.sh dist/
+          cp scripts/install.sh scripts/uninstall.sh dist/
           cd dist
           sha256sum -- * > SHA256SUMS
 

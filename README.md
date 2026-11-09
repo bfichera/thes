@@ -16,6 +16,20 @@ This installs to `~/.local/bin` (set `THES_INSTALL_DIR` to change it, or
 The WordNet data ships inside the binary, so `thes` works offline right away. On
 first run it builds its database and index in about a second.
 
+### Uninstall
+
+```sh
+curl -fsSL https://github.com/bfichera/thes/releases/latest/download/uninstall.sh | sh
+```
+
+This removes the binary and the database and index `thes` built on first run.
+Set `THES_KEEP_DATA=1` to keep the data, and `THES_INSTALL_DIR` if you installed
+somewhere other than `~/.local/bin`. The installer doesn't edit your shell
+config, so there is nothing else to undo.
+
+To do it by hand: `rm ~/.local/bin/thes` and `rm -rf ~/.local/share/thes`
+(`thes info` shows where the data lives).
+
 ## Usage
 
 ```sh
